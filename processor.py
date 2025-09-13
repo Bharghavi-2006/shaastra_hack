@@ -423,7 +423,7 @@ def api_verify():
     ai_score, ai_reasons = run_hf_fake_detector(pre)
 
     heur_score = 1.0 if 'failed' not in ' '.join(heuristics_reasons).lower() else 0.0
-    valid = (heur_score > 0.5) and (ai_score < 0.5)
+    valid = (heur_score > 0.7) and (ai_score < 0.6)
 
     return jsonify({
         'valid': bool(valid),
@@ -475,25 +475,34 @@ def run_ocr(pil_img: Image.Image) -> str:
     return re.sub(r'\s+', ' ', txt).strip()
 
 def heuristics_doc_type_and_checks(ocr_text: str, pre_image: Image.Image):
-    reasons, text = [], ocr_text.lower()
-    if 'aadhaar' in text or re.search(r'\d{4}\s*\d{4}\s*\d{4}', text):
-        doc = 'aadhaar'
-        m = re.search(r'(?:\d{4}[\s-]?){2}\d{4}', ocr_text)
-        if m and len(re.sub(r'\D','',m.group(0)))==12:
-            reasons.append('aadhaar-format-ok')
-        else:
-            reasons.append('aadhaar-format-failed')
-    elif re.search(r'[A-Z]{5}[0-9]{4}[A-Z]', ocr_text):
-        doc = 'pan'; reasons.append('pan-format-ok')
-    elif 'passport' in text or detect_mrz(pre_image):
-        doc = 'passport'; reasons.append('mrz-detected')
-    elif 'driving licence' in text or 'driving license' in text:
-        doc = 'driving_license'
-    elif 'voter' in text or 'electoral' in text:
-        doc = 'voter_id'
+    """
+    Generic content check: text presence, name, DOB.
+    """
+    reasons = []
+    text = ocr_text.strip()
+
+    if not text:
+        reasons.append("no-text-detected")
     else:
-        doc = 'unknown'; reasons.append('doc-type-ambiguous')
-    return doc, reasons
+        reasons.append("text-detected")
+
+    # Name pattern (capitalized words)
+    name_match = re.search(r'\b[A-Z][a-z]+(?: [A-Z][a-z]+){0,2}\b', ocr_text)
+    if name_match:
+        reasons.append(f"name-found:{name_match.group(0)}")
+    else:
+        reasons.append("name-not-found")
+
+    # Date pattern (DOB)
+    dob_match = re.search(r'\b(0?[1-9]|[12][0-9]|3[01])[-/](0?[1-9]|1[0-2])[-/](\d{2}|\d{4})\b', ocr_text)
+    if dob_match:
+        reasons.append(f"dob-found:{dob_match.group(0)}")
+    else:
+        reasons.append("dob-not-found")
+
+    # We return a dummy doc type since frontend expects it
+    doc_type = "generic"
+    return doc_type, reasons
 
 def detect_mrz(pil_img: Image.Image) -> bool:
     txt = pytesseract.image_to_string(
